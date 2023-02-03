@@ -4,6 +4,7 @@ from PIL import Image
 from transformers import AutoProcessor
 from transformers import CLIPVisionModel
 from tqdm import tqdm
+from pymilvus import Collection 
 
 
 class Encoder:
@@ -42,4 +43,6 @@ class Encoder:
         return pooled_output
 
     def upload(self, filepath, vector):
-        response = self.milvus_connection.insert((vector, filepath))
+        id = hash(filepath)
+
+        response = self.milvus_connection.insert([[id], [vector], [filepath]])
