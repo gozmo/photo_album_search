@@ -12,6 +12,7 @@ pudb = "*"
 tqdm = "*"
 ipython = "*"
 pymilvus = "*"
+jsonlines = "*"
 
 [dev-packages]
 

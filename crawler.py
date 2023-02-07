@@ -17,9 +17,10 @@ class Crawler:
                                root_dir=self.root_directory)
 
         self.files = [f"{self.root_directory}/{file}" for file in files]
-        print(self.files)
+        length = len(self.files)
+        print(f"Files found: {length}")
 
-        return self.files
+        return self.files[:30000]
 
 
 
