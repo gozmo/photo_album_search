@@ -17,7 +17,8 @@ def load_annotations(label):
 
     with open(path, "r") as f:
         dictionary = json.load(f)
-    return dictionary
+    new_dictionary = {int(k):v for k,v in dictionary.items()}
+    return new_dictionary
 
 
 
