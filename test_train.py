@@ -12,4 +12,5 @@ parser.add_argument("label")
 
 args = parser.parse_args()
 
+
 trainer.train(args.label)

@@ -63,9 +63,12 @@ def show_annotations():
     selected_label = st.selectbox("Labels", labels)
 
     annotations = load_annotations(selected_label)
+    print("Annotations length", len(annotations))
     
     vector_ids = [int(vector_id) for vector_id, is_label in annotations.items() if is_label == "True"]
     database_elems = db_utils.get_database_elems(vector_ids)
+
+    st.write(f"Total: {len(annotations)}, Positives: {len(vector_ids)}")
 
     for elem in database_elems:
         filepath = elem["filepath"]

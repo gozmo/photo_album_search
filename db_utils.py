@@ -1,6 +1,7 @@
 from pymilvus import connections
 from pymilvus import CollectionSchema, FieldSchema, DataType
 from pymilvus import Collection
+from encoder import TextEncoder
 
 def init():
     connections.connect(alias="default",
@@ -38,7 +39,6 @@ def get_database_elems(vector_ids):
     collection = get_collection()
     res = collection.query(expr = f"vector_id in {vector_ids}",
                            offset = 0,
-                           limit=len(vector_ids),
                            output_fields = ["vector_id", "filepath", "vector"],
                            consistency_level="Strong")
 

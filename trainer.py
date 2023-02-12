@@ -1,7 +1,9 @@
 from pymilvus import Collection 
 import io_utils
 import db_utils
+import pudb
 
+from tqdm import tqdm
 import torch
 from torch.nn import Dropout
 from torch.nn import BatchNorm1d
@@ -20,11 +22,29 @@ def __load_training_set(label):
 
     elems = db_utils.get_database_elems(vector_ids)
     
+    positives = []
+    negatives = []
     for elem in elems:
         vector_id = int(elem["vector_id"])
-        elem["target"] = [1.0 if annotations[vector_id] == "True" else 0.0]
+        if annotations[vector_id] == "True":
+            elem["target"] = 1.0 
+            positives.append(elem)
+        else:
+            elem["target"] = 0.0 
+            negatives.append(elem)
 
-    return elems
+    return positives, negatives
+
+def __load_splitted_data(label):
+    positives, negatives = __load_training_set(label)
+
+    split_ratio = [0.8, 0.2]
+    positives_split = torch.utils.data.random_split(positives, split_ratio) 
+    negatives_split = torch.utils.data.random_split(negatives, split_ratio) 
+
+    training_set = positives_split[0] + negatives_split[0]
+    validation_set = positives_split[1] + negatives_split[1]
+    return training_set, validation_set
 
 def get_ffn():
     n_layers = 3
@@ -50,14 +70,15 @@ def __collate_fn(batch):
     vectors = [elem["vector"] for elem in batch]
     vectors = torch.tensor(vectors).to("cuda")
 
-    targets = [elem["target"] for elem in batch]
+    targets = [[elem["target"]] for elem in batch]
     targets = torch.tensor(targets).to("cuda")
 
     return vectors, targets
 
     
 def train(label):
-    dataset = __load_training_set(label)
+    training_set, validation_set = __load_splitted_data(label)
+
     ffn = get_ffn()
 
     bce_loss = torch.nn.BCELoss()
@@ -68,10 +89,9 @@ def train(label):
 
     epochs = 5
     for epoch_num in range(epochs):
-        print(f"Epoch:{epoch_num}")
 
-        dataloader = DataLoader(dataset, collate_fn=__collate_fn, batch_size=8, shuffle=True)
-        for vectors, targets in dataloader:
+        dataloader = DataLoader(training_set, collate_fn=__collate_fn, batch_size=8, shuffle=True)
+        for vectors, targets in tqdm(dataloader, desc=f"Epoch: {epoch_num}"):
             output = ffn(vectors)
 
             loss = bce_loss(output, targets)
@@ -79,6 +99,15 @@ def train(label):
             optimizer.step()
             optimizer.zero_grad()
 
+    io_utils.save_model(label, ffn)
 
 def classify(label):
-    pass
+    data = db_utils.all_data()
+    model = io_utils.load_model(label)
+
+    dataloader = DataLoader(dataset, collate_fn=__collate_fn, batch_size=8, shuffle=True)
+    for vectors, targets in dataloader:
+        output = ffn(vectors)
+        #thresholds here
+
+
