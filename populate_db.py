@@ -12,7 +12,8 @@ args = parser.parse_args()
 
 
 setup_milvus()
-crawler = Crawler(args.root_directory, ["jpg"])
+crawler = Crawler(args.root_directory, ["jpg", "CR2","cr2"])
+# crawler = Crawler(args.root_directory, ["jpg"])
 
 files = crawler.start()
 
