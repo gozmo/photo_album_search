@@ -14,3 +14,4 @@ args = parser.parse_args()
 
 
 trainer.train(args.label)
+trainer.classify(args.label)

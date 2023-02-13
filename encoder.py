@@ -31,15 +31,20 @@ class Encoder:
                     )
 
     def read_image(self, filepath):
-        with Image.open(filepath) as raw_image:
+        basepath, extension = os.path.splitext(filepath)
 
-                
-            image = self.processor(images=raw_image,
-                                   return_tensors="pt",
-                                   do_convert_rgb=True,
-                                   do_resize=True
-                                   )
-            image = image.to(self.device)
+        if extension.lower() == ".cr2":
+            with rawpy.imread(path) as raw:
+                raw_image = raw.postprocess()
+        else:
+            raw_image = Image.open(filepath)
+
+        image = self.processor(images=raw_image,
+                               return_tensors="pt",
+                               do_convert_rgb=True,
+                               do_resize=True
+                               )
+        image = image.to(self.device)
 
         return image
 

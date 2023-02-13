@@ -43,3 +43,11 @@ def get_database_elems(vector_ids):
                            consistency_level="Strong")
 
     return res
+
+def all_data():
+    collection = get_collection()
+    res = collection.query(expr = f"vector_id != 0 ",
+                           offset = 0,
+                           output_fields = ["vector_id", "filepath", "vector"],
+                           consistency_level="Strong")
+    return res

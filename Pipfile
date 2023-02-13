@@ -4,7 +4,7 @@ verify_ssl = true
 name = "pypi"
 
 [packages]
-torch = "*"
+torch = "==1.11.*"
 streamlit = "*"
 transformers = "*"
 pillow = "*"
@@ -14,8 +14,10 @@ ipython = "*"
 pymilvus = "*"
 jsonlines = "*"
 jupyter = "*"
+rawpy = "*"
+scikit-learn = "*"
 
 [dev-packages]
 
 [requires]
-python_version = "3.10"
+python_version = "3.9"

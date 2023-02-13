@@ -52,3 +52,15 @@ def load_model(label):
     model = torch.load(path)
     return model
 
+def save_threshold(label, threshold):
+    path = f"{Directories.MODEL_REPO}/{label}.config"
+    content = {"threshold": threshold}
+    with open(path, "w") as f:
+        json.dump(content, f)
+
+def load_threshold(label):
+    path = f"{Directories.MODEL_REPO}/{label}.config"
+    with open(path, "r") as f:
+        content = json.load(f)
+
+    return content["threshold"]

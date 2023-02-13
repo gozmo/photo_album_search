@@ -8,8 +8,8 @@ from io_utils import save_annotations
 from io_utils import load_annotations
 from io_utils import list_labels
 from db_utils import init
-
 import db_utils
+import trainer
 
 
 def search():
@@ -56,7 +56,6 @@ def annotate():
         if submitted:
             save_annotations(label, annotations)
 
-
 def show_annotations():
     labels = list_labels()
 
@@ -75,9 +74,28 @@ def show_annotations():
         image = Image.open(filepath)
         st.image(image)
 
+def classify():
+    labels = list_labels()
+    selected_label = st.selectbox("Labels", labels)
+
+    run = st.button("Run")
+    if run:
+        vector_ids = trainer.classify(selected_label)
+        st.write(f"Classified: {len(vector_ids)}")
+
+        database_elems = db_utils.get_database_elems(vector_ids)
+
+        for elem in database_elems:
+            filepath = elem["filepath"]
+            image = Image.open(filepath)
+            st.image(image)
+
+
+
+
 init()    
 
-page = st.sidebar.radio("Page", ["search", "annotate", "show annotations"])
+page = st.sidebar.radio("Page", ["search", "annotate", "show annotations", "classify"])
 
 if page == "search":
     search()
@@ -85,3 +103,5 @@ elif page == "annotate":
     annotate()
 elif page == "show annotations":
     show_annotations()
+elif page == "classify":
+    classify()
