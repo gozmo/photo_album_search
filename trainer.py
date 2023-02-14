@@ -56,7 +56,7 @@ def __load_splitted_data(label):
     return training_set, validation_set
 
 def get_ffn():
-    n_layers = 3
+    n_layers = 5
     dim_hidden = 300
     dim_input = 512
     dim_output = 1
@@ -99,10 +99,10 @@ def train(label):
     bce_loss = torch.nn.BCELoss()
     params = ffn.parameters()
     optimizer = torch.optim.AdamW(params,
-                                  lr=1e-08,
+                                  lr=1e-09,
                                   weight_decay=0.1)
 
-    epochs = 5
+    epochs = 20
     for epoch_num in range(epochs):
 
         dataloader = DataLoader(training_set, collate_fn=__collate_fn, batch_size=8, shuffle=True)
@@ -124,7 +124,7 @@ def train(label):
         all_targets.extend(targets.tolist())
     
     best_score = 0.0
-    best_threshold = 0.9
+    best_threshold = 0.7
     # for threshold in np.arange(0.0, 0.99, 0.01):
         # outputs = [0 if prob < threshold else 1 for prob in all_probabilities]
         # score = f1_score(all_targets, outputs)
@@ -135,10 +135,10 @@ def train(label):
     io_utils.save_threshold(label, best_threshold)
     io_utils.save_model(label, ffn)
 
-def classify(label):
+def classify(label, threshold):
     dataset = db_utils.all_data()
     ffn = io_utils.load_model(label)
-    threshold = io_utils.load_threshold(label)
+    # threshold = io_utils.load_threshold(label)
 
     result_vector_ids = []
     dataloader = DataLoader(dataset, collate_fn=__collate_fn, batch_size=8, shuffle=True)

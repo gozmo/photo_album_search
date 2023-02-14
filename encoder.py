@@ -23,10 +23,10 @@ class Encoder:
                       "params":{"nlist":1024}
                       }
 
-        self.collection.create_index(
-                  field_name="vector", 
-                    index_params=index_params
-                    )
+        # self.collection.create_index(
+                  # field_name="vector", 
+                    # index_params=index_params
+                    # )
 
         files = DataLoader(self.files, batch_size=64)
         for filepath_batch in tqdm(files):
@@ -42,7 +42,10 @@ class Encoder:
 
             if extension.lower() == ".cr2":
                 with rawpy.imread(filepath) as raw:
-                    raw_image = raw.postprocess()
+                    try:
+                        raw_image = raw.postprocess()
+                    except:
+                        continue
             else:
                 raw_image = Image.open(filepath)
             raw_images.append(raw_image)

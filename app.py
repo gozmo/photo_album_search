@@ -78,9 +78,15 @@ def classify():
     labels = list_labels()
     selected_label = st.selectbox("Labels", labels)
 
-    run = st.button("Run")
-    if run:
-        vector_ids = trainer.classify(selected_label)
+    threshold = st.slider("Threshold", min_value=0.4, max_value=0.95, value=0.75, step=0.05)
+
+    update_model_run = st.button("Update Model")
+    if update_model_run:
+        trainer.train(selected_label)
+
+    classify_run = st.button("Run")
+    if classify_run:
+        vector_ids = trainer.classify(selected_label, threshold)
         st.write(f"Classified: {len(vector_ids)}")
 
         database_elems = db_utils.get_database_elems(vector_ids)
