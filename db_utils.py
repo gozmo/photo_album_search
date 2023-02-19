@@ -51,3 +51,59 @@ def all_data():
                            output_fields = ["vector_id", "filepath", "vector"],
                            consistency_level="Strong")
     return res
+
+def create_collection():
+    connections.connect(
+      alias="default",
+      host='localhost', 
+      port='19530'
+    )
+
+    collection_name = "image_vectors"
+
+    utility.drop_collection(collection_name)
+
+
+    vector_id = FieldSchema(
+      name="vector_id", 
+      dtype=DataType.INT64, 
+      is_primary=True, 
+    )
+    filepath = FieldSchema(
+      name="filepath", 
+      dtype=DataType.VARCHAR, 
+      max_length=400,
+    )
+    vector = FieldSchema(
+      name="vector", 
+      dtype=DataType.FLOAT_VECTOR, 
+      dim=512,
+    )
+
+    schema = CollectionSchema(
+      fields=[vector_id,vector, filepath], 
+      description="Image vector search"
+    )
+
+    collection = Collection(
+    name=collection_name, 
+    schema=schema, 
+    using='default', 
+    shards_num=2
+    )
+
+    index_params = {
+              "metric_type":"L2",
+                "index_type":"IVF_FLAT",
+                  "params":{"nlist":1024}
+                  }
+    self.collection.create_index(
+              field_name="vector", 
+                index_params=index_params
+                )
+
+def upload_images(filepaths, vectors):
+    ids = [hash(filepath) for filepath in filepaths]
+
+    self.collection.insert([ids, vectors, filepaths])
+

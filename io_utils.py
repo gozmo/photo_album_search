@@ -6,11 +6,13 @@ from constants import Directories
 
 
 
-def __init_directory_structure():
+def init_directory_structure():
     if not os.path.isdir(Directories.ANNOTATION):
         os.makedirs(Directories.ANNOTATION)
     if not os.path.isdir(Directories.MODEL_REPO):
         os.makedirs(Directories.MODEL_REPO)
+    if not os.path.isdir(Directories.IMAGE_CACHE):
+        os.makedirs(Directories.IMAGE_CACHE)
 
 def load_annotations(label):
     path = f'{Directories.ANNOTATION}/{label}.json'
@@ -27,7 +29,7 @@ def load_annotations(label):
 
 
 def save_annotations(label, annotations):
-    __init_directory_structure()
+    init_directory_structure()
 
     saved_annotations = load_annotations(label)
     saved_annotations.update(annotations)
@@ -43,7 +45,7 @@ def list_labels():
     return labels
 
 def save_model(label, model):
-    __init_directory_structure()
+    init_directory_structure()
     path = f"{Directories.MODEL_REPO}/{label}.pt"
     torch.save(model, path)
 

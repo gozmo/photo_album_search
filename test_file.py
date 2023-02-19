@@ -49,7 +49,6 @@ labels_for_classification =  ["cat",
 inputs = processor(images=image, return_tensors="pt")
 vision_projection = vision_model(**inputs).image_embeds
 
-pu.db
 
 text_similarities = []
 for text in labels_for_classification:

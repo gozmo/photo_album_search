@@ -16,11 +16,11 @@ class Crawler:
                                recursive=True,
                                root_dir=self.root_directory)
 
-        self.files = [f"{self.root_directory}/{file}" for file in files]
+        self.files = [f"{self.root_directory}{file}" for file in files]
         length = len(self.files)
-        print(f"Files found: {length}")
+        print(f"Crawler found {length} files")
 
-        return self.files[:30000]
+        return self.files
 
 
 
