@@ -26,6 +26,8 @@ from transformers import get_constant_schedule_with_warmup
 
 import random
 
+import logging
+
 DEVICE = "cuda"
 
 class Collate:
@@ -33,7 +35,7 @@ class Collate:
         self.text_encoder = TextEncoder(DEVICE)
         self.visual_encoder = VisualEncoder(DEVICE)
 
-    def collate_fn_load_images(self, filepath):
+    def collate_fn_load_images(self, filepaths):
 
         images = []
         tags = []
@@ -51,7 +53,7 @@ class Collate:
 
     def __collate_fn(self, images, tags):
 
-        targets = torch.zeros(len(filepaths), 512)
+        targets = torch.zeros(len(images), 512)
         for i, image_tags in enumerate(tags):
             if 0 < len(image_tags):
                 sentence = self.__generate_sentence(image_tags)
@@ -63,7 +65,7 @@ class Collate:
 
             targets[i] = target[0]
 
-        targets = torch.tensor(targets).to(DEVICE)
+        targets = targets.clone().detach().to(DEVICE)
             
         data = {"pixel_values": torch.tensor(images)}
         images = BatchFeature(data, tensor_type="pt").to(DEVICE)
@@ -76,36 +78,40 @@ class Collate:
 
         return sentence + tag_subsentence
 
-def train(load_images=True):
+def train(load_images=False):
     dataset = []
     collate = Collate()
     if load_images:
-        image, image_tags, orig_filepath = load_cached_image(filepath)
-        dataset.append( (image, image_tags) )
-        collate_fn = collate.collate_fn_images_in_memory
+        logging.info("Read image files and storing them in memory")
+        filepaths = get_cached_files()
+        for filepath in filepaths:
+            image, image_tags, orig_filepath = load_cached_image(filepath)
+            dataset.append( (image, image_tags) )
+            collate_fn = collate.collate_fn_images_in_memory
     else:
+        logging.info("Image files will be read on demand in collate_fn")
         dataset = get_cached_files()
         collate_fn = collate.collate_fn_load_images
 
-    batch_size = 70
+    batch_size = 36
     lr_warm_up_steps = 200
     gradient_accumulation_steps = 10
-    learning_rate = 10e-5
+    learning_rate = 10e-6
     weight_decay = 0.01
-    epochs = 100
+    epochs = 40
 
     model = CLIPVisionModelWithProjection.from_pretrained("openai/clip-vit-base-patch32").to(DEVICE)
     ce_loss = torch.nn.CrossEntropyLoss()
     optimizer = torch.optim.AdamW(model.parameters(),
                                   lr=learning_rate,
                                   weight_decay=weight_decay)
-    kk
-    schedule = get_constant_schedule_with_warmup(optimizer,
-                                      num_warmup_steps=gradient_accumulation_steps)
 
-    for i in tqdm(range(epochs), desc="Epochs"):
+    schedule = get_constant_schedule_with_warmup(optimizer,
+                                      num_warmup_steps=lr_warm_up_steps)
+
+    for i in range(epochs):
         dataloader = DataLoader(dataset, batch_size=batch_size, collate_fn=collate_fn, shuffle=True)
-        for batch_images, targets in dataloader:
+        for batch_images, targets in tqdm(dataloader, desc=f"Epoch: {i}"):
             outputs = model(**batch_images)
 
             pooled_outputs = outputs.image_embeds
@@ -114,11 +120,12 @@ def train(load_images=True):
             targets_normalized = torch.nn.functional.normalize(pooled_outputs, dim=0, p=1) 
 
             loss = ce_loss(pooled_outputs_normalized, targets_normalized)
-
+            loss.backward()
 
             if i % gradient_accumulation_steps:
                 optimizer.step()
                 optimizer.zero_grad()
                 schedule.step()
 
-    torch.save(model, "trained_clip_visual_model.pt")
+    collate.text_encoder.text_model.save_pretrained("model_output/text")
+    model.save_pretrained("model_output/visual")
