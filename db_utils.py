@@ -19,7 +19,7 @@ def get_collection(collection_name):
     return collection
 
 def list_collections():
-    return utility.list_collections()
+    return sorted(utility.list_collections())
 
 def search(collection_name, search_query, ignore_vector_ids=[], n=5):
     model_name = db_utils.collection_name_to_model_name(collection_name)

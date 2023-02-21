@@ -101,7 +101,7 @@ def train(model_name_saved, load_images=False):
     batch_size = 36
     lr_warm_up_steps = 200
     gradient_accumulation_steps = 50
-    learning_rate = 10e-8
+    learning_rate = 10e-2
     weight_decay = 0.01
     epochs = 2
 
