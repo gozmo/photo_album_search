@@ -1,57 +1,53 @@
-from crawler import Crawler
-from encoder import VisualEncoder
-import pudb
 import argparse
-from image_cache import ImageCache
-from image_cache import load_cached_image
+from constants import DEFAULT_MODEL
+import pudb
+import torch
+import trainer
+
+from encoder import VisualEncoder
 from image_cache import get_cached_files
-from io_utils import init_directory_structure
+from image_cache import load_cached_image
 from torch.utils.data import DataLoader 
-from milvus import drop_collection
-from milvus import connect
-from milvus import upload_images
-from milvus import create_collection
-from transformers import AutoProcessor 
+from tqdm import tqdm
+from transformers.image_processing_utils import BatchFeature
+import db_utils
+from constants import DEFAULT_MODEL
 
-processor = AutoProcessor.from_pretrained("openai/clip-vit-base-patch32")
-
-def read_image(filepath):
-    _ , extension = os.path.splitext(filepath)
-
-    if extension.lower() == ".cr2":
-        with rawpy.imread(filepath) as raw: 
-            raw_image = raw.postprocess()
-    else:
-        raw_image = Image.open(filepath)
-
-    images = processor(images=raw_image,
-                       return_tensors="pt",
-                       do_convert_rgb=True,
-                       do_resize=True)
-    return images
-
+DEVICE="cuda"
 
 parser = argparse.ArgumentParser()
-parser.add_argument("root_directory")
 parser.add_argument("-d", "--delete", action="store_true")
+parser.add_argument("model_name")
 args = parser.parse_args()
 
+trainer.train(args.model_name)
+
+if args.model_name == "default":
+    model_name = DEFAULT_MODEL
+else:
+    model_name = args.model_name
+
+db_utils.add_model_name(model_name)
+collection_name = db_utils.model_name_to_collection_name(model_name)
+
+db_utils.connect()
+
 if args.delete:
-    drop_collection()
-    create_collection()
+    db_utils.drop_collection(collection_name)
+    db_utils.create_collection(collection_name)
 
-crawler = Crawler(args.root_directory, ["jpg", "CR2","cr2"])
+visual_encoder = VisualEncoder(DEVICE, model_name)
 
-files = crawler.start()
 
-visual_encoder = VisualEncoder("cuda")
-
+files = get_cached_files()
 
 dataloader = DataLoader(files, batch_size=24)
 for filepaths in tqdm(dataloader):
-    encoded_images = []
-    for filepath in filepaths:
-        processed_image = read_image(filepath)
-        encoded_image = visual_encoder.encode(processed_image)
-        encoded_images.append(encoded_image)
-    upload_image(filepaths, encoded_images)
+    cached_images = [load_cached_image(filepath) for filepath in filepaths]
+    images = [elem[0][0] for elem in cached_images]
+    filepaths = [elem[2] for elem in cached_images]
+    data = {"pixel_values": torch.tensor(images)}
+    batch = BatchFeature(data, tensor_type="pt").to(DEVICE)
+    encoded_images = visual_encoder.encode(batch)
+
+    db_utils.upload_images(collection_name, filepaths, encoded_images.tolist())

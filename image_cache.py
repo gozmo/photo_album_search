@@ -20,9 +20,12 @@ class ImageCache:
     def cache(self, filepaths):
 
         for filepath in tqdm(filepaths):
-            tags = self.__read_xmp(filepath)
-            processed_image = self.__read_image(filepath)
-            self.__cache_image(filepath, processed_image, tags)
+            try:
+                tags = self.__read_xmp(filepath)
+                processed_image = self.__read_image(filepath)
+                self.__cache_image(filepath, processed_image, tags)
+            except:
+                pass
 
 
     def __read_image(self, filepath):
@@ -62,7 +65,7 @@ class ImageCache:
 
     def __get_name(self, original_filepath):
         filename_and_ext = os.path.basename(original_filepath)
-        filename, ext = os.path.splitext(filename_and_ext)
+        filename, _ = os.path.splitext(filename_and_ext)
         filepath = f"{Directories.IMAGE_CACHE}/{filename}.cache"
         return filepath
 

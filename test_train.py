@@ -1,11 +1,8 @@
 import trainer
-# from pymilvus import connections
+import argparse
 
-# connections.connect(
-  # alias="default",
-  # host='localhost', 
-  # port='19530')
+parser = argparse.ArgumentParser()
+parser.add_argument("model_name")
+args = parser.parse_args()
 
-
-
-trainer.train()
+trainer.train(args.model_name)

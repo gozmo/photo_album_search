@@ -23,17 +23,20 @@ from encoder import TextEncoder
 from encoder import VisualEncoder
 from transformers import CLIPVisionModelWithProjection
 from transformers import get_constant_schedule_with_warmup
-
+import db_utils
 import random
-
 import logging
+import constants
+import model_repo
 
 DEVICE = "cuda"
 
 class Collate:
-    def __init__(self):
-        self.text_encoder = TextEncoder(DEVICE)
-        self.visual_encoder = VisualEncoder(DEVICE)
+    def __init__(self, model_name):
+        self.collection_name = db_utils.model_name_to_collection_name(model_name)
+        self.model_name = model_name
+        self.text_encoder = TextEncoder(DEVICE, model_name)
+        self.visual_encoder = VisualEncoder(DEVICE, model_name)
 
     def collate_fn_load_images(self, filepaths):
 
@@ -78,9 +81,10 @@ class Collate:
 
         return sentence + tag_subsentence
 
-def train(load_images=False):
+def train(model_name_saved, load_images=False):
+    model_name = constants.DEFAULT_MODEL
     dataset = []
-    collate = Collate()
+    collate = Collate(model_name)
     if load_images:
         logging.info("Read image files and storing them in memory")
         filepaths = get_cached_files()
@@ -93,14 +97,15 @@ def train(load_images=False):
         dataset = get_cached_files()
         collate_fn = collate.collate_fn_load_images
 
+    dataset = dataset
     batch_size = 36
     lr_warm_up_steps = 200
-    gradient_accumulation_steps = 10
-    learning_rate = 10e-6
+    gradient_accumulation_steps = 50
+    learning_rate = 10e-8
     weight_decay = 0.01
-    epochs = 40
+    epochs = 2
 
-    model = CLIPVisionModelWithProjection.from_pretrained("openai/clip-vit-base-patch32").to(DEVICE)
+    model = CLIPVisionModelWithProjection.from_pretrained(model_name).to(DEVICE)
     ce_loss = torch.nn.CrossEntropyLoss()
     optimizer = torch.optim.AdamW(model.parameters(),
                                   lr=learning_rate,
@@ -110,6 +115,7 @@ def train(load_images=False):
                                       num_warmup_steps=lr_warm_up_steps)
 
     for i in range(epochs):
+        accumulated_loss = 0
         dataloader = DataLoader(dataset, batch_size=batch_size, collate_fn=collate_fn, shuffle=True)
         for batch_images, targets in tqdm(dataloader, desc=f"Epoch: {i}"):
             outputs = model(**batch_images)
@@ -121,11 +127,15 @@ def train(load_images=False):
 
             loss = ce_loss(pooled_outputs_normalized, targets_normalized)
             loss.backward()
+            accumulated_loss += loss.item()
 
             if i % gradient_accumulation_steps:
                 optimizer.step()
                 optimizer.zero_grad()
                 schedule.step()
+        print(accumulated_loss)
 
-    collate.text_encoder.text_model.save_pretrained("model_output/text")
-    model.save_pretrained("model_output/visual")
+    text_path, visual_path = model_repo.get_savepath(model_name_saved) 
+
+    collate.text_encoder.text_model.save_pretrained(text_path)
+    model.save_pretrained(visual_path)

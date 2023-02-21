@@ -13,6 +13,8 @@ def init_directory_structure():
         os.makedirs(Directories.MODEL_REPO)
     if not os.path.isdir(Directories.IMAGE_CACHE):
         os.makedirs(Directories.IMAGE_CACHE)
+    if not os.path.isdir(Directories.CONFIG_FILES):
+        os.makedirs(Directories.CONFIG_FILES)
 
 def load_annotations(label):
     path = f'{Directories.ANNOTATION}/{label}.json'
