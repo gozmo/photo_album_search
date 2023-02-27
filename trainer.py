@@ -103,7 +103,7 @@ def train(model_name_saved, load_images=False):
     gradient_accumulation_steps = 50
     learning_rate = 10e-2
     weight_decay = 0.01
-    epochs = 2
+    epochs = 1
 
     model = CLIPVisionModelWithProjection.from_pretrained(model_name).to(DEVICE)
     ce_loss = torch.nn.CrossEntropyLoss()
@@ -117,15 +117,20 @@ def train(model_name_saved, load_images=False):
     for i in range(epochs):
         accumulated_loss = 0
         dataloader = DataLoader(dataset, batch_size=batch_size, collate_fn=collate_fn, shuffle=True)
+        #fix the data loading issue
         for batch_images, targets in tqdm(dataloader, desc=f"Epoch: {i}"):
             outputs = model(**batch_images)
 
             pooled_outputs = outputs.image_embeds
 
-            pooled_outputs_normalized = torch.nn.functional.normalize(pooled_outputs, dim=0, p=1) 
-            targets_normalized = torch.nn.functional.normalize(pooled_outputs, dim=0, p=1) 
+            pooled_outputs_normalized = torch.nn.functional.normalize(pooled_outputs)
+            targets_normalized = torch.nn.functional.normalize(targets)
 
-            loss = ce_loss(pooled_outputs_normalized, targets_normalized)
+            current_batch_size, _ = pooled_outputs.size()
+            targets = torch.arange(0, current_batch_size).to(DEVICE)
+            loss_a = ce_loss(pooled_outputs_normalized, targets)
+            loss_b = ce_loss(targets_normalized, targets)
+            loss = (loss_a + loss_b) / 2
             loss.backward()
             accumulated_loss += loss.item()
 

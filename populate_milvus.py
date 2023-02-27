@@ -20,6 +20,10 @@ parser.add_argument("-d", "--delete", action="store_true")
 parser.add_argument("model_name")
 args = parser.parse_args()
 
+db_utils.add_model_name(args.model_name)
+
+db_utils.connect()
+
 trainer.train(args.model_name)
 
 if args.model_name == "default":
@@ -27,11 +31,8 @@ if args.model_name == "default":
 else:
     model_name = args.model_name
 
-db_utils.add_model_name(model_name)
-collection_name = db_utils.model_name_to_collection_name(model_name)
 
-db_utils.connect()
-
+collection_name = db_utils.model_name_to_collection_name(args.model_name)
 if args.delete:
     db_utils.drop_collection(collection_name)
     db_utils.create_collection(collection_name)
@@ -42,7 +43,7 @@ visual_encoder = VisualEncoder(DEVICE, model_name)
 files = get_cached_files()
 
 dataloader = DataLoader(files, batch_size=24)
-for filepaths in tqdm(dataloader):
+for filepaths in tqdm(dataloader, desc="uploading"):
     cached_images = [load_cached_image(filepath) for filepath in filepaths]
     images = [elem[0][0] for elem in cached_images]
     filepaths = [elem[2] for elem in cached_images]

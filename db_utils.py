@@ -119,7 +119,7 @@ def add_model_name(model_name):
     content[model_name] = safe_collection_name
 
     with open(Files.MODEL_NAMES, "w") as f:
-        content = json.dump(content, f)
+        json.dump(content, f)
 
 
 def model_name_to_collection_name(model_name):
