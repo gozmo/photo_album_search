@@ -16,6 +16,7 @@ jsonlines = "*"
 jupyter = "*"
 rawpy = "*"
 scikit-learn = "*"
+mlflow = "*"
 
 [dev-packages]
 

@@ -16,7 +16,6 @@ from constants import DEFAULT_MODEL
 DEVICE="cuda"
 
 parser = argparse.ArgumentParser()
-parser.add_argument("-d", "--delete", action="store_true")
 parser.add_argument("model_name")
 args = parser.parse_args()
 
@@ -33,9 +32,9 @@ else:
 
 
 collection_name = db_utils.model_name_to_collection_name(args.model_name)
-if args.delete:
-    db_utils.drop_collection(collection_name)
-    db_utils.create_collection(collection_name)
+
+db_utils.drop_collection(collection_name)
+db_utils.create_collection(collection_name)
 
 visual_encoder = VisualEncoder(DEVICE, model_name)
 
