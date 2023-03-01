@@ -33,25 +33,31 @@ import mlflow
 
 DEVICE = "cuda"
 
-def __generate_sentence(self, tags):
+def generate_sentence(tags):
     sentence = "a picture of "
     tag_subsentence = "and".join(tags)
 
     return sentence + tag_subsentence
 
-def collate_fn(text_encoder, static_visual_encoder, batch):
-    images = [elem[0] for elem in batch]
-    tags = [elem[1] for elem in batch]
+def collate_fn(text_encoder, static_visual_encoder, filepaths):
+    images = []
+    tags = []
+
+    for filepath in filepaths:
+        image, image_tags, orig_filepath = load_cached_image(filepath)
+        images.append(image[0])
+        tags.append(image_tags)
+
 
     targets = torch.zeros(len(images), 512)
     for i, image_tags in enumerate(tags):
         if 0 < len(image_tags):
-            sentence = __generate_sentence(image_tags)
+            sentence = generate_sentence(image_tags)
             target = text_encoder.encode(sentence)
         else:
             data = {"pixel_values": torch.tensor([ images[i] ])}
             input_image = BatchFeature(data, tensor_type="pt")
-            target = static_visual_encoder.encode(input_image).detach()
+            target = static_visual_encoder.encode(input_image)
 
         targets[i] = target[0]
 
@@ -60,17 +66,47 @@ def collate_fn(text_encoder, static_visual_encoder, batch):
     data = {"pixel_values": torch.tensor(images)}
     images = BatchFeature(data, tensor_type="pt").to(DEVICE)
 
-    return images, targets
+    return images, targets, tags
 
 
-def train(model_name_saved, load_images=False):
+def find_eval_images(batch_images, tags, eval_tag):
+    pu.db
+    output = []
+
+    for image, image_tags in zip(batch_images["pixel_values"], tags):
+        if eval_tag in image_tags:
+            output.append(image, eval_tag)
+
+    return output
+
+
+def eval(visual_model, text_encoder, eval_set):
+
+    distances = 0
+    for image, tags in eval_set:
+        outputs = model(images=[image])
+        image_embedding = outputs.image_embeds[0]
+
+        sentence = generate_sentence(tags)
+        text_embedding = text_encoder.encode(sentence)
+
+        image_embedding_normalized = torch.nn.functional.normalize(pooled_outputs)
+        text_embedding_normalized = torch.nn.functional.normalize(targets)
+
+        distance = (image_embedding_normalized - text_embedding_normalized).norm()
+
+        distances += distance
+
+    avg_distance = distances / len(eval_set)
+    return avg_distance
+
+def train(model_name_saved):
     with mlflow.start_run():
         model_name = constants.DEFAULT_MODEL
         dataset = []
 
         logging.info("Image files will be read on demand in collate_fn")
         dataset = get_cached_files()
-        collate_fn = collate.collate_fn_load_images
 
         dataset = dataset
         params = {
@@ -79,33 +115,38 @@ def train(model_name_saved, load_images=False):
             "gradient_accumulation_steps" : 50,
             "learning_rate" : 1e-8,
             "weight_decay" : 0.01,
-            "epochs" : 50}
+            "epochs" : 2}
 
         for name, value in params.items():
             log_param(name, value)
 
-
-
         text_encoder = TextEncoder(DEVICE, model_name)
-        visual_encoder = VisualEncoder(DEVICE, model_name)
-        model = CLIPVisionModelWithProjection.from_pretrained(model_name).to(DEVICE)
+        static_visual_encoder = VisualEncoder(DEVICE, model_name)
+        visual_model = CLIPVisionModelWithProjection.from_pretrained(model_name).to(DEVICE)
+
         ce_loss = torch.nn.CrossEntropyLoss()
-        optimizer = torch.optim.AdamW(model.parameters(),
+        optimizer = torch.optim.AdamW(visual_model.parameters(),
                                       lr=params["learning_rate"],
                                       weight_decay=params["weight_decay"])
 
         schedule = get_constant_schedule_with_warmup(optimizer,
                                           num_warmup_steps=params["lr_warm_up_steps"])
 
+
+        eval_set = []
+
         for i in range(params["epochs"]):
             accumulated_loss = 0
-            dataloader = DataLoader(dataset, batch_size=params["batch_size"], collate_fn=collate_fn, shuffle=True)
-            #fix the data loading issue
+            dataloader = DataLoader(dataset, batch_size=params["batch_size"], shuffle=True)
+
             for batch in tqdm(dataloader, desc=f"Epoch: {i}"):
                     
-                batch_images, targets = collate_fn(text_model, static_visual_encoder, batch)
+                batch_images, targets, tags = collate_fn(text_encoder, static_visual_encoder, batch)
+                
+                if i == 0:
+                    eval_set += find_eval_images(batch_images, tags, "algot")
 
-                outputs = model(**batch_images)
+                outputs = visual_model(**batch_images)
 
                 pooled_outputs = outputs.image_embeds
 
@@ -126,9 +167,11 @@ def train(model_name_saved, load_images=False):
                     schedule.step()
             epoch_loss =  accumulated_loss / len(dataloader)
             log_metric("loss", epoch_loss)
-            print(epoch_loss)
+
+            avg_distance = eval(visual_model, text_encoder, eval_set)
+            log_metric("avg distance", avg_distance)
 
         text_path, visual_path = model_repo.get_savepath(model_name_saved) 
 
-        mlflow.pytorch.save_model(text_model, text_path)
+        mlflow.pytorch.save_model(text_encoder.text_model, text_path)
         mlflow.pytorch.save_model(visual_model, visual_path)
