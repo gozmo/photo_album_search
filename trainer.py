@@ -70,32 +70,33 @@ def collate_fn(text_encoder, static_visual_encoder, filepaths):
 
 
 def find_eval_images(batch_images, tags, eval_tag):
-    pu.db
     output = []
 
     for image, image_tags in zip(batch_images["pixel_values"], tags):
         if eval_tag in image_tags:
-            output.append(image, eval_tag)
+            output.append((image, eval_tag))
 
     return output
 
 
 def eval(visual_model, text_encoder, eval_set):
 
+    pu.db
     distances = 0
     for image, tags in eval_set:
-        outputs = model(images=[image])
+        image = image.resize(1,3,224,224)
+        outputs = visual_model(pixel_values=image)
         image_embedding = outputs.image_embeds[0]
 
         sentence = generate_sentence(tags)
         text_embedding = text_encoder.encode(sentence)
 
-        image_embedding_normalized = torch.nn.functional.normalize(pooled_outputs)
-        text_embedding_normalized = torch.nn.functional.normalize(targets)
+        image_embedding_normalized = torch.nn.functional.normalize(image_embedding,dim=0)
+        text_embedding_normalized = torch.nn.functional.normalize(text_embedding)
 
         distance = (image_embedding_normalized - text_embedding_normalized).norm()
 
-        distances += distance
+        distances += distance.item()
 
     avg_distance = distances / len(eval_set)
     return avg_distance
@@ -108,14 +109,14 @@ def train(model_name_saved):
         logging.info("Image files will be read on demand in collate_fn")
         dataset = get_cached_files()
 
-        dataset = dataset
+        dataset = dataset[:100]
         params = {
             "batch_size" : 36,
             "lr_warm_up_steps" : 100,
             "gradient_accumulation_steps" : 50,
             "learning_rate" : 1e-8,
             "weight_decay" : 0.01,
-            "epochs" : 2}
+            "epochs" : 10}
 
         for name, value in params.items():
             log_param(name, value)

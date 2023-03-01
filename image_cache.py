@@ -2,6 +2,7 @@ import os
 import pickle
 import rawpy
 import glob
+import random
 
 from PIL import Image
 from torch.utils.data import DataLoader 
@@ -88,7 +89,8 @@ def load_cached_image(cache_file):
     with open(cache_file, "rb") as f:
         content = pickle.load(f)
     image = content["images"]
-    tags = content["tags"]
+    # tags = content["tags"]
+    tags = random.choice([["algot"], ["majken"], [] ])
     filepath = content["filepaths"]
 
     return image, tags, filepath
