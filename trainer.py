@@ -6,10 +6,8 @@ from torch.utils.data import DataLoader
 from image_cache import load_cached_image
 from image_cache import get_cached_files
 from transformers.image_processing_utils import BatchFeature
-from encoder import TextEncoder
-from encoder import VisualEncoder
-from transformers import CLIPVisionModelWithProjection
-from transformers import AutoTokenizer, CLIPTextModelWithProjection
+from transformers import CLIPModel
+from transformers import AutoProcessor
 from transformers import get_constant_schedule_with_warmup
 import logging
 import constants
@@ -39,20 +37,15 @@ def collate_fn(filepaths):
         tags.append(image_tags)
     return images, tags
 
-def create_training_data(text_model,tokenizer, static_visual_encoder, images, tags):
-
-    text_embeddings = torch.zeros(len(images), 512, requires_grad=True).to(DEVICE)
-    text_embeddings.retain_grad()
-
+def create_training_data(processor, images, tags):
     sentences = [generate_sentence(image_tags) for image_tags in tags]
-    inputs = tokenizer(sentences, padding=True, return_tensors="pt").to(DEVICE)
-    text_embeddings = text_model(**inputs).text_embeds
-    text_embeddings.retain_grad()
+    text_input = processor(text=sentences, padding=True)
 
     data = {"pixel_values": torch.tensor(images)}
-    images = BatchFeature(data, tensor_type="pt").to(DEVICE)
+    data.update(text_input)
+    batch = BatchFeature(data, tensor_type="pt").to(DEVICE)
 
-    return images, text_embeddings 
+    return batch  
 
 # def create_training_data(text_model,tokenizer, static_visual_encoder, images, tags):
 
@@ -122,35 +115,27 @@ def train(model_name_saved):
 
         params = {
             "batch_size" : 36,
-            "lr_warm_up_steps" : 10,
-            "gradient_accumulation_steps" : 1,
-            "learning_rate" : 1e-1,
-            "weight_decay" : 0.00,
-            "epochs" : 1,
+            "lr_warm_up_steps" : 5,
+            "gradient_accumulation_steps" : 100,
+            "learning_rate" : 1e-5,
+            "weight_decay" : 0.01,
+            "epochs" : 10,
             "eval_set_size": 20}
 
         for name, value in params.items():
             log_param(name, value)
 
 
-        text_encoder = TextEncoder(DEVICE, model_name)
-        static_visual_encoder = VisualEncoder(DEVICE, model_name)
-        visual_model = CLIPVisionModelWithProjection.from_pretrained(constants.DEFAULT_MODEL).to(DEVICE)
-        text_model = CLIPTextModelWithProjection.from_pretrained(constants.DEFAULT_MODEL).to(DEVICE)
-        tokenizer = AutoTokenizer.from_pretrained(constants.DEFAULT_MODEL)
+        clip_model = CLIPModel.from_pretrained(constants.DEFAULT_MODEL).to(DEVICE)
+        processor = AutoProcessor.from_pretrained("openai/clip-vit-base-patch32")
 
         ce_loss_a = torch.nn.CrossEntropyLoss()
         ce_loss_b = torch.nn.CrossEntropyLoss()
-        optimizer_visual = torch.optim.AdamW(visual_model.parameters(),
-                                              lr=params["learning_rate"],
-                                              weight_decay=params["weight_decay"])
-        optimizer_text = torch.optim.AdamW(text_model.parameters(),
+        optimizer= torch.optim.AdamW(clip_model.parameters(),
                                               lr=params["learning_rate"],
                                               weight_decay=params["weight_decay"])
 
-        schedule_visual = get_constant_schedule_with_warmup(optimizer_visual,
-                                          num_warmup_steps=params["lr_warm_up_steps"])
-        schedule_text = get_constant_schedule_with_warmup(optimizer_text,
+        schedule= get_constant_schedule_with_warmup(optimizer,
                                           num_warmup_steps=params["lr_warm_up_steps"])
 
         eval_set = []
@@ -160,26 +145,29 @@ def train(model_name_saved):
             accumulated_loss = 0
             step_loss = 0
             dataloader = DataLoader(dataset, collate_fn=collate_fn, batch_size=params["batch_size"], shuffle=True)
+            
 
             for images, tags in tqdm(dataloader, desc=f"Epoch: {i}"):
                     
-                batch_images, text_embeddings = create_training_data(text_model, tokenizer, static_visual_encoder, images, tags)
+                batch = create_training_data(processor, images, tags)
 
-                if len(eval_set) < params["eval_set_size"]:
-                    eval_set += find_eval_images(batch_images, tags, "algot")
 
-                outputs = visual_model(**batch_images)
+                # if len(eval_set) < params["eval_set_size"]:
+                    # eval_set += find_eval_images(batch_images, tags, "algot")
 
+                outputs = clip_model(**batch)
+                
                 image_embeddings = outputs.image_embeds
-                image_embeddings.retain_grad()
+                text_embeddings = outputs.text_embeds
 
-                image_embeddings_normalized = image_embeddings
-                # image_embeddings_normalized = torch.nn.functional.normalize(image_embeddings)
-                # image_embeddings_normalized.retain_grad()
+                # image_embeddings_normalized = image_embeddings
+                # text_embeddings_normalized = text_embeddings
 
-                text_embeddings_normalized = text_embeddings
-                # text_embeddings_normalized= torch.nn.functional.normalize(text_embeddings)
-                # text_embeddings_normalized.retain_grad()
+                image_embeddings_normalized = torch.nn.functional.normalize(image_embeddings)
+                image_embeddings_normalized.retain_grad()
+
+                text_embeddings_normalized= torch.nn.functional.normalize(text_embeddings)
+                text_embeddings_normalized.retain_grad()
 
                 current_batch_size, _ = image_embeddings.size()
                 contrastive_targets = torch.arange(0, current_batch_size).to(DEVICE)
@@ -193,21 +181,18 @@ def train(model_name_saved):
                 accumulated_loss += loss.item()
                 step_loss += loss.item()
 
-                if i % params["gradient_accumulation_steps"] == 0:
-                    optimizer_visual.step()
-                    optimizer_visual.zero_grad()
-                    schedule_visual.step()
-
-                    optimizer_text.step()
-                    optimizer_text.zero_grad()
-                    schedule_text.step()
+                if step_count % params["gradient_accumulation_steps"] == 0:
+                    pu.db
+                    optimizer.step()
+                    optimizer.zero_grad()
+                    schedule.step()
 
                     log_metric("step loss", step_loss, step=step_count)
                     step_loss = 0
-                    step_count += 1
 
-                    avg_distance = eval_distance(visual_model, text_encoder, eval_set)
-                    log_metric("avg distance", avg_distance, step=step_count)
+                    # avg_distance = eval_distance(visual_model, text_encoder, eval_set)
+                    # log_metric("avg distance", avg_distance, step=step_count)
+                step_count += 1
 
             epoch_loss =  accumulated_loss / len(dataloader)
             log_metric("epoch loss", epoch_loss, step=i)
@@ -215,5 +200,5 @@ def train(model_name_saved):
 
         text_path, visual_path = model_repo.get_savepath(model_name_saved) 
 
-        text_encoder.text_model.save_pretrained(text_path)
+        text_model.save_pretrained(text_path)
         visual_model.save_pretrained(visual_path)
