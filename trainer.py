@@ -187,6 +187,7 @@ def train(model_name_saved):
                     optimizer.zero_grad()
                     schedule.step()
 
+                    step_loss /= params["gradient_accumulation_steps"]
                     log_metric("step loss", step_loss, step=step_count)
                     step_loss = 0
 
