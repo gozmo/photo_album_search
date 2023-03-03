@@ -89,8 +89,7 @@ def load_cached_image(cache_file):
     with open(cache_file, "rb") as f:
         content = pickle.load(f)
     image = content["images"]
-    # tags = content["tags"]
-    tags = random.choice([["algot"], ["majken"], [] ])
+    tags = content["tags"]
     filepath = content["filepaths"]
 
     return image, tags, filepath
