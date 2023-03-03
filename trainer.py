@@ -165,8 +165,6 @@ def train(model_name_saved):
                     
                 batch_images, text_embeddings = create_training_data(text_model, tokenizer, static_visual_encoder, images, tags)
 
-                #text embeddings doesn't get grads set, the normalized has
-                
                 if len(eval_set) < params["eval_set_size"]:
                     eval_set += find_eval_images(batch_images, tags, "algot")
 
