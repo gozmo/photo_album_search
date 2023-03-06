@@ -9,12 +9,11 @@ from transformers.image_processing_utils import BatchFeature
 from transformers import CLIPModel
 from transformers import AutoProcessor
 from transformers import get_constant_schedule_with_warmup
+from transformers import get_cosine_with_hard_restarts_schedule_with_warmup
 import logging
 import constants
 import model_repo
-from mlflow import log_metric, log_param, log_artifacts
-import mlflow
-
+from mlflow import log_metric, log_param 
 
 DEVICE = "cuda"
 
@@ -23,7 +22,7 @@ def generate_sentence(tags):
         return "a picture"
 
     sentence = "a picture of "
-    tag_subsentence = "and".join(tags)
+    tag_subsentence = " and ".join(tags)
 
     return sentence + tag_subsentence
 
@@ -74,24 +73,28 @@ def create_training_data(processor, images, tags):
 def find_eval_images(batch_images, tags, eval_tag):
     output = []
 
-    for image, image_tags in zip(batch_images["pixel_values"], tags):
+    for image, image_tags in zip(batch_images, tags):
         if eval_tag in image_tags:
-            image = image.detach().to("cpu")
+            image = torch.tensor(image)
             output.append((image, eval_tag))
 
     return output
 
 
-def eval_distance(visual_model, text_encoder, eval_set):
+def eval_distance(clip_model, processor, eval_set):
 
     distances = 0
     for image, tags in eval_set:
         image = image.resize(1,3,224,224).to(DEVICE)
-        outputs = visual_model(pixel_values=image)
-        image_embedding = outputs.image_embeds[0]
 
-        sentence = generate_sentence(tags)
-        text_embedding = text_encoder.encode(sentence)
+        sentences = generate_sentence(tags)
+        text_input = processor(text=sentences, padding=True, return_tensors="pt").to(DEVICE)
+        data = {"pixel_values": image}
+        data.update(text_input)
+
+        output = clip_model(**data).detach()
+        image_embedding = output.image_embeds
+        text_embedding = output.text_embeds
 
         image_embedding_normalized = torch.nn.functional.normalize(image_embedding,dim=0)
         text_embedding_normalized = torch.nn.functional.normalize(text_embedding, dim=0)
@@ -104,39 +107,46 @@ def eval_distance(visual_model, text_encoder, eval_set):
     return avg_distance
 
 def train(model_name_saved):
-    with mlflow.start_run():
-        model_name = constants.DEFAULT_MODEL
         dataset = []
 
         logging.info("Image files will be read on demand in collate_fn")
         dataset = get_cached_files()
         
-        # dataset = dataset[:500]
 
         params = {
             "batch_size" : 36,
-            "lr_warm_up_steps" : 5,
-            "gradient_accumulation_steps" : 100,
+            "gradient_accumulation_steps" : 20,
             "learning_rate" : 1e-5,
             "weight_decay" : 0.01,
             "epochs" : 10,
-            "eval_set_size": 20}
+            "eval_set_size": 20,
+            "learning_rate_scheduler": "cosine"}
 
         for name, value in params.items():
             log_param(name, value)
 
 
         clip_model = CLIPModel.from_pretrained(constants.DEFAULT_MODEL).to(DEVICE)
+        clip_model.requires_grad_ = True
+
         processor = AutoProcessor.from_pretrained("openai/clip-vit-base-patch32")
 
         ce_loss_a = torch.nn.CrossEntropyLoss()
         ce_loss_b = torch.nn.CrossEntropyLoss()
         optimizer= torch.optim.AdamW(clip_model.parameters(),
-                                              lr=params["learning_rate"],
-                                              weight_decay=params["weight_decay"])
+                                      lr=params["learning_rate"],
+                                      weight_decay=params["weight_decay"])
 
-        schedule= get_constant_schedule_with_warmup(optimizer,
-                                          num_warmup_steps=params["lr_warm_up_steps"])
+        total_steps = int((len(dataset) / params["batch_size"]) * params["epochs"])
+        warmup = int(0.2 * params["epochs"])
+        if params["learning_rate_scheduler"] == "cosine":
+            schedule= get_cosine_with_hard_restarts_schedule_with_warmup(optimizer,
+                                                                         num_warmup_steps=warmup,
+                                                                         num_cycles=10,
+                                                                         num_training_steps=total_steps)
+        elif params["learning_rate_scheduler"] == "constant":
+            schedule= get_constant_schedule_with_warmup(optimizer,
+                                                        num_warmup_steps=warmup)
 
         eval_set = []
 
@@ -153,27 +163,27 @@ def train(model_name_saved):
 
 
                 # if len(eval_set) < params["eval_set_size"]:
-                    # eval_set += find_eval_images(batch_images, tags, "algot")
+                    # eval_set += find_eval_images(images, tags, "algot")
 
                 outputs = clip_model(**batch)
                 
                 image_embeddings = outputs.image_embeds
                 text_embeddings = outputs.text_embeds
 
-                # image_embeddings_normalized = image_embeddings
-                # text_embeddings_normalized = text_embeddings
+                image_embeddings = image_embeddings / image_embeddings.norm(dim=-1, keepdim=True)
+                text_embeddings = text_embeddings / text_embeddings.norm(dim=-1, keepdim=True)
 
-                image_embeddings_normalized = torch.nn.functional.normalize(image_embeddings)
-                image_embeddings_normalized.retain_grad()
+                logit_scale = clip_model.logit_scale.exp()
 
-                text_embeddings_normalized= torch.nn.functional.normalize(text_embeddings)
-                text_embeddings_normalized.retain_grad()
+                logits_per_image = logit_scale * image_embeddings @ text_embeddings.t()
+                logits_per_text = logit_scale * text_embeddings @ image_embeddings.t()
+
 
                 current_batch_size, _ = image_embeddings.size()
                 contrastive_targets = torch.arange(0, current_batch_size).to(DEVICE)
 
-                loss_a = ce_loss_a(image_embeddings_normalized, contrastive_targets)
-                loss_b = ce_loss_b(text_embeddings_normalized, contrastive_targets)
+                loss_a = ce_loss_a(logits_per_image, contrastive_targets)
+                loss_b = ce_loss_b(logits_per_text, contrastive_targets)
 
                 loss = (loss_a + loss_b) / 2
                 loss.backward()
@@ -181,8 +191,17 @@ def train(model_name_saved):
                 accumulated_loss += loss.item()
                 step_loss += loss.item()
 
-                if step_count % params["gradient_accumulation_steps"] == 0:
-                    pu.db
+                if step_count % params["gradient_accumulation_steps"] == 0 and step_count != 0:
+                    
+                    all_grads = [ layer.grad.norm().item() for layer in clip_model.parameters()]
+                    all_grads = sum(all_grads)
+                    log_metric("all_grads", all_grads, step=step_count)
+
+                    all_weights = [ layer.norm().item() for layer in clip_model.parameters()]
+                    all_weights = sum(all_weights)
+                    log_metric("all_weights ", all_weights, step=step_count)
+
+
                     optimizer.step()
                     optimizer.zero_grad()
                     schedule.step()
@@ -191,15 +210,15 @@ def train(model_name_saved):
                     log_metric("step loss", step_loss, step=step_count)
                     step_loss = 0
 
-                    # avg_distance = eval_distance(visual_model, text_encoder, eval_set)
+                    # avg_distance = eval_distance(clip_model, processor, eval_set)
                     # log_metric("avg distance", avg_distance, step=step_count)
+
                 step_count += 1
 
             epoch_loss =  accumulated_loss / len(dataloader)
             log_metric("epoch loss", epoch_loss, step=i)
 
 
-        text_path, visual_path = model_repo.get_savepath(model_name_saved) 
+        save_path = model_repo.get_savepath(model_name_saved, "clip") 
 
-        text_model.save_pretrained(text_path)
-        visual_model.save_pretrained(visual_path)
+        clip_model.save_pretrained(save_path)

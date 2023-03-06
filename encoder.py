@@ -1,5 +1,6 @@
 from transformers import AutoTokenizer, CLIPTextModelWithProjection
 from transformers import CLIPVisionModelWithProjection
+from transformers import AutoProcessor
 from constants import DEFAULT_MODEL
 import model_repo
 
@@ -20,11 +21,12 @@ class VisualEncoder:
 class TextEncoder:
     def __init__(self, device, model_name):
         self.device = device
-        self.text_model = model_repo.get_text_model(model_name).to(device)
+        self.clip_model = model_repo.get_text_model(model_name).to(device)
         self.tokenizer = AutoTokenizer.from_pretrained(DEFAULT_MODEL)
+        self.processor = AutoProcessor.from_pretrained(DEFAULT_MODEL)
 
     def encode(self, text):
-        inputs = self.tokenizer(text, padding=True, return_tensors="pt").to(self.device)
-        text_projection = self.text_model(**inputs).text_embeds
+        text_input = self.processor(text=text, padding=True, return_tensors="pt").to(self.device)
+        text_projection = self.clip_model(**text_input).text_embeds
 
         return text_projection
