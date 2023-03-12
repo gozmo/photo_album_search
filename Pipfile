@@ -17,6 +17,7 @@ jupyter = "*"
 rawpy = "*"
 scikit-learn = "*"
 mlflow = "*"
+optuna = "*"
 
 [dev-packages]
 

@@ -12,11 +12,13 @@ import xml.etree.ElementTree as ET
 from tqdm import tqdm
 
 from constants import Directories
+from constants import DEFAULT_MODEL
+from encoder import VisualEncoder
 
 class ImageCache:
     def __init__(self):
         self.processor = AutoProcessor.from_pretrained("openai/clip-vit-base-patch32")
-
+        self.visual_encoder = VisualEncoder("cuda", DEFAULT_MODEL)
 
     def cache(self, filepaths):
 
@@ -24,9 +26,10 @@ class ImageCache:
             try:
                 tags = self.__read_xmp(filepath)
                 processed_image = self.__read_image(filepath)
-                self.__cache_image(filepath, processed_image, tags)
             except:
-                pass
+                continue
+            embedding = self.__embed(processed_image)
+            self.__cache_image(filepath, processed_image, tags, embedding)
 
 
     def __read_image(self, filepath):
@@ -43,6 +46,10 @@ class ImageCache:
                                 do_convert_rgb=True,
                                 do_resize=True)
         return images
+
+    def __embed(self, image):
+        embeddings = self.visual_encoder.encode(image)
+        return embeddings[0].tolist()
 
     def __read_xmp(self, filepath):
         xmp_filepath = f"{filepath}.xmp"
@@ -70,9 +77,10 @@ class ImageCache:
         filepath = f"{Directories.IMAGE_CACHE}/{filename}.cache"
         return filepath
 
-    def __cache_image(self, filepath, processed_images, tags):
+    def __cache_image(self, filepath, processed_images, tags, embedding):
         content = {"images": processed_images["pixel_values"].tolist(),
                    "tags": tags,
+                   "embedding": embedding,
                    "filepaths": filepath}
 
         filename = self.__get_name(filepath)
@@ -91,6 +99,7 @@ def load_cached_image(cache_file):
     image = content["images"]
     tags = content["tags"]
     filepath = content["filepaths"]
+    embedding = content["embedding"]
 
-    return image, tags, filepath
+    return image, tags, filepath, embedding
 

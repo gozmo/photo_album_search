@@ -14,49 +14,47 @@ import logging
 import constants
 import model_repo
 from mlflow import log_metric, log_param 
+import optuna
+import mlflow
+import random
 
 DEVICE = "cuda"
 
 def generate_sentence(tags):
     if len(tags) == 0:
-        return "a picture"
+        return "a photo"
 
-    sentence = "a picture of "
+    sentence = "a photo of "
     tag_subsentence = " and ".join(tags)
 
     return sentence + tag_subsentence
 
-def collate_fn(filepaths):
-    images = []
-    tags = []
+class Collator:
+    def __init__(self, processor):
+        self.processor = processor
 
-    for filepath in filepaths:
-        image, image_tags, _ = load_cached_image(filepath)
-        images.append(image[0])
-        tags.append(image_tags)
-    return images, tags
+    def collate_fn(self, filepaths):
+        images = []
+        tags = []
+        embeddings = []
 
-def create_training_data(processor, images, tags):
-    sentences = [generate_sentence(image_tags) for image_tags in tags]
-    text_input = processor(text=sentences, padding=True)
+        for filepath in filepaths:
+            image, image_tags, _, embedding = load_cached_image(filepath)
+            images.append(image[0])
+            tags.append(image_tags)
+            embeddings.append(embedding)
 
-    data = {"pixel_values": torch.tensor(images)}
-    data.update(text_input)
-    batch = BatchFeature(data, tensor_type="pt").to(DEVICE)
+        sentences = [generate_sentence(image_tags) for image_tags in tags]
+        text_input = self.processor(text=sentences, padding=True)
 
-    return batch  
+        data = {"pixel_values": torch.tensor(images)}
+        data.update(text_input)
+        batch = BatchFeature(data, tensor_type="pt").to(DEVICE)
+
+        return batch, embeddings, tags
 
 # def create_training_data(text_model,tokenizer, static_visual_encoder, images, tags):
 
-    # text_embeddings = torch.zeros(len(images), 512, requires_grad=True).to(DEVICE)
-    # text_embeddings.retain_grad()
-    # for i, image_tags in enumerate(tags):
-        # if 0 < len(image_tags):
-            # sentence = generate_sentence(image_tags)
-            # inputs = tokenizer(sentence, padding=True, return_tensors="pt").to(DEVICE)
-            # target = text_model(**inputs).text_embeds
-            # target.retain_grad()
-        # else:
             # data = {"pixel_values": torch.tensor([ images[i] ])}
             # input_image = BatchFeature(data, tensor_type="pt")
             # target = static_visual_encoder.encode(input_image).detach()
@@ -106,21 +104,25 @@ def eval_distance(clip_model, processor, eval_set):
     avg_distance = distances / len(eval_set)
     return avg_distance
 
-def train(model_name_saved):
+def __train_loop(params, trial=None, experiment_id=None):
+    model_name_saved = None
+
+    with mlflow.start_run(experiment_id=experiment_id) as run:
+        
+        model_name_saved = run.info.run_name
+
+
         dataset = []
 
         logging.info("Image files will be read on demand in collate_fn")
         dataset = get_cached_files()
+
+        random.shuffle(dataset)
+
+        idx = int(len(dataset) * params["data_size"])
+        dataset = dataset[:idx]
         
 
-        params = {
-            "batch_size" : 36,
-            "gradient_accumulation_steps" : 20,
-            "learning_rate" : 1e-5,
-            "weight_decay" : 0.01,
-            "epochs" : 10,
-            "eval_set_size": 20,
-            "learning_rate_scheduler": "cosine"}
 
         for name, value in params.items():
             log_param(name, value)
@@ -148,27 +150,27 @@ def train(model_name_saved):
             schedule= get_constant_schedule_with_warmup(optimizer,
                                                         num_warmup_steps=warmup)
 
-        eval_set = []
+        collator = Collator(processor)
 
-        step_count = 0
+        global_step = 0
         for i in range(params["epochs"]):
             accumulated_loss = 0
             step_loss = 0
-            dataloader = DataLoader(dataset, collate_fn=collate_fn, batch_size=params["batch_size"], shuffle=True)
+            dataloader = DataLoader(dataset, collate_fn=collator.collate_fn, batch_size=params["batch_size"], shuffle=True)
             
 
-            for images, tags in tqdm(dataloader, desc=f"Epoch: {i}"):
-                    
-                batch = create_training_data(processor, images, tags)
-
-
-                # if len(eval_set) < params["eval_set_size"]:
-                    # eval_set += find_eval_images(images, tags, "algot")
+            for batch, orig_visual_embeddings, tags in tqdm(dataloader, desc=f"Epoch: {i}"):
 
                 outputs = clip_model(**batch)
-                
+
                 image_embeddings = outputs.image_embeds
                 text_embeddings = outputs.text_embeds
+
+                for i, image_tags in enumerate(tags):
+                    if len(image_tags) == 0:
+                        
+                        original_embedding = torch.tensor(orig_visual_embeddings[i]).to(DEVICE)
+                        text_embeddings[i] = original_embedding
 
                 image_embeddings = image_embeddings / image_embeddings.norm(dim=-1, keepdim=True)
                 text_embeddings = text_embeddings / text_embeddings.norm(dim=-1, keepdim=True)
@@ -191,15 +193,15 @@ def train(model_name_saved):
                 accumulated_loss += loss.item()
                 step_loss += loss.item()
 
-                if step_count % params["gradient_accumulation_steps"] == 0 and step_count != 0:
+                if global_step % params["gradient_accumulation_steps"] == 0 and global_step != 0:
                     
                     all_grads = [ layer.grad.norm().item() for layer in clip_model.parameters()]
                     all_grads = sum(all_grads)
-                    log_metric("all_grads", all_grads, step=step_count)
+                    log_metric("all_grads", all_grads, step=global_step)
 
                     all_weights = [ layer.norm().item() for layer in clip_model.parameters()]
                     all_weights = sum(all_weights)
-                    log_metric("all_weights ", all_weights, step=step_count)
+                    log_metric("all_weights ", all_weights, step=global_step)
 
 
                     optimizer.step()
@@ -207,13 +209,16 @@ def train(model_name_saved):
                     schedule.step()
 
                     step_loss /= params["gradient_accumulation_steps"]
-                    log_metric("step loss", step_loss, step=step_count)
+                    log_metric("step loss", step_loss, step=global_step)
                     step_loss = 0
 
-                    # avg_distance = eval_distance(clip_model, processor, eval_set)
-                    # log_metric("avg distance", avg_distance, step=step_count)
+                    if trial:
+                        trial.report(step_loss, global_step)
 
-                step_count += 1
+                        if trial.should_prune():
+                            raise optuna.TrialPruned()
+
+                global_step += 1
 
             epoch_loss =  accumulated_loss / len(dataloader)
             log_metric("epoch loss", epoch_loss, step=i)
@@ -222,3 +227,54 @@ def train(model_name_saved):
         save_path = model_repo.get_savepath(model_name_saved, "clip") 
 
         clip_model.save_pretrained(save_path)
+        return model_name_saved, epoch_loss
+
+def train():
+
+    params = {
+        "batch_size" : 60,
+        "gradient_accumulation_steps" : 2,
+        "learning_rate" : 1e-5,
+        "weight_decay" : 0.01,
+        "epochs" : 2,
+        "data_size": 1.0,
+        "learning_rate_scheduler": "cosine"}
+
+    model_name, _ = __train_loop(params)
+    return model_name 
+
+def __hpo_objective(trial, experiment_id, data_size):
+
+    params = {
+        "batch_size" : 60,
+        "gradient_accumulation_steps" : trial.suggest_int("gradient_accumulation_steps",1,20),
+        "learning_rate" : trial.suggest_categorical("learning_rate", [1e-3, 1e-4,1e-5,1e-6,1e-7,1e-8]),
+        "weight_decay" : trial.suggest_categorical("weight_decay", [0.01,0.05, 0.1, 0.2, 0.3, 0.5]),
+        "epochs" : 10,
+        "data_size": data_size,
+        "learning_rate_scheduler": trial.suggest("lr_schedule", ["constant", "cosine"])
+        }
+    model_name_saved, loss = __train_loop(params, trial, experiment_id)
+
+    trial.set_user_attr("model_name", model_name_saved)
+    return loss
+
+
+def run_hpo(experiment_name):
+    experiment_id = mlflow.create_experiment(f"hpo run {experiment_name}")
+
+    study = optuna.create_study(direction='minimize',
+                                # pruner=optuna.pruners.HyperbandPruner(min_resource=1,
+                                                                      # max_resource=10,
+                                                                      # reduction_factor=3)
+                                pruner=optuna.pruners.SuccessiveHalvingPruner(min_early_stopping_rate=1,
+                                                                              bootstrap_count=1,
+                                                                              min_resource=1)
+                                )
+
+    objective = lambda trial: __hpo_objective(trial, experiment_id, data_size=0.05)
+    study.optimize(objective, n_trials=30)
+    trials = [(t.value, t.user_attrs["model_name"]) for t in study.get_trials()]
+    (value, model_name) = max(trials)
+
+    return model_name

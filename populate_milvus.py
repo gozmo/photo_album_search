@@ -16,22 +16,22 @@ import mlflow
 
 DEVICE="cuda"
 
+
 parser = argparse.ArgumentParser()
-parser.add_argument("--model_name", default=None)
+parser.add_argument("--experiment_name")
+parser.add_argument("--hpo", default=False, action=argparse.BooleanOptionalAction)
 args = parser.parse_args()
 
 
 db_utils.connect()
 
-model_name = ""
-with mlflow.start_run() as run:
-    if args.model_name== None:
-        model_name = run.info.run_name
-    else:
-        model_name = args.model_name
 
-    trainer.train(model_name)
-mlflow.end_run()
+
+if args.hpo:
+    model_name = trainer.run_hpo(args.experiment_name)
+else:
+    model_name = trainer.train()
+
 
 db_utils.add_model_name(model_name)
 

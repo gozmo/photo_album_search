@@ -23,7 +23,7 @@ def list_collections():
 
 def search(collection_name, search_query, ignore_vector_ids=[], n=5):
     model_name = db_utils.collection_name_to_model_name(collection_name)
-    text_encoder = TextEncoder("cuda", model_name)
+    text_encoder = TextEncoder("cpu", model_name)
     text_vector = text_encoder.encode(search_query)
     text_vector = text_vector.tolist()
 
