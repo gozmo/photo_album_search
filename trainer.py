@@ -153,7 +153,7 @@ def __train_loop(params, trial=None, experiment_id=None):
         collator = Collator(processor)
 
         global_step = 0
-        for i in range(params["epochs"]):
+        for epoch_i in range(params["epochs"]):
             accumulated_loss = 0
             step_loss = 0
             dataloader = DataLoader(dataset, collate_fn=collator.collate_fn, batch_size=params["batch_size"], shuffle=True)
@@ -221,7 +221,7 @@ def __train_loop(params, trial=None, experiment_id=None):
                 global_step += 1
 
             epoch_loss =  accumulated_loss / len(dataloader)
-            log_metric("epoch loss", epoch_loss, step=i)
+            log_metric("epoch loss", epoch_loss, step=epoch_i)
 
 
         save_path = model_repo.get_savepath(model_name_saved, "clip") 
