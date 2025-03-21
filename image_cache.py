@@ -1,4 +1,5 @@
 import os
+from os.path import isfile
 import pickle
 import rawpy
 import glob
@@ -23,14 +24,19 @@ class ImageCache:
 
     def cache(self, filepaths):
 
-        data_loader = DataLoader(filepaths,
+        unprocessed_files = self.__filter_files(filepaths)
+        logging.info("Files: {len(filepaths)}, Unprocessed files: {len(unprocessed_files)}")
+        
+        data_loader = DataLoader(unprocessed_files,
                                  collate_fn=self.collate_fn,
                                  batch_size=80, 
-                                 num_workers=5)
+                                 num_workers=4)
 
         for filepaths, images, tags, ratings in tqdm(data_loader):
+
             embeddings = self.__embed(images)
             embeddings = embeddings.tolist()
+
 
             for i in range(len(ratings)):
                 image_downsampled = images["pixel_values"][i]
@@ -39,17 +45,20 @@ class ImageCache:
                 image_rating = ratings[i]
                 image_filepath = filepaths[i]
 
-                # self.__write_image(image_filepath,
-                                   # image_downsampled,
-                                   # image_tags,
-                                   # image_embedding,
-                                   # image_rating)
+                self.__write_image(image_filepath,
+                                   image_downsampled,
+                                   image_tags,
+                                   image_embedding,
+                                   image_rating)
 
     def collate_fn(self, filepaths):
         images = []
         tags = []
         ratings = []
         for filepath in filepaths:
+
+            filename = self.__get_name(filepath)
+
             try:
                 image, image_tags, image_rating = self.__read_file(filepath)
             except:
@@ -61,12 +70,17 @@ class ImageCache:
             ratings.append(image_rating)
 
 
-        images = self.processor(images=images,
-                                return_tensors="pt",
-                                do_convert_rgb=True,
-                                do_resize=True)
+        if len(images) == 0:
+            images = self.processor(images=images,
+                                    return_tensors="pt",
+                                    do_convert_rgb=True,
+                                    do_resize=True)
 
         return filepaths, images, tags, ratings
+
+    def __filter_files(self, filepaths):
+        unprocessed_files = [filepath for filepath in filepaths if not os.path.isfile(str(self.__get_name))]
+        return unprocessed_files
 
     def __read_file(self, filepath):
 
@@ -146,13 +160,11 @@ class ImageCache:
         filename_and_ext = os.path.basename(original_filepath)
         filename, _ = os.path.splitext(filename_and_ext)
         filepath = f"{Directories.IMAGE_CACHE}/{filename}.cache"
-        if os.path.isfile(filepath):
-            filepath = f"{Directories.IMAGE_CACHE}/{filename}_2.cache"
 
         return filepath
 
     def __write_image(self, filepath, processed_images, tags, embedding, rating):
-        content = {"image": processed_images["pixel_values"].tolist(),
+        content = {"image": processed_images.tolist(),
                    "tags": tags,
                    "rating": rating,
                    "embedding": embedding,

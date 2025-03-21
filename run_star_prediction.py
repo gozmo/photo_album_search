@@ -11,7 +11,8 @@ import os
 from transformers import AutoImageProcessor, get_constant_schedule_with_warmup
 from tqdm import tqdm
 import mlflow
-from sklearn.metrics import f1_score
+from sklearn.metrics import precision_recall_fscore_support
+from sklearn.metrics import f1_score 
 
 
 from src.star_prediction.model import Model
@@ -20,15 +21,18 @@ from src.star_prediction.model import Model
 import logging
 logger = logging.getLogger(__name__)
 
-#TODO: Move constants to new file
+# TODO: Move constants to new file
 IMG_CACHE = "cache/images"
 
 class RatingDataset(Dataset):
-    def __init__(self, ratings, classify=False):
+    def __init__(self, ratings, classify=False, debug=False):
         if classify:
             self.ratings = [e for e in ratings if e['rating'] is None]
         else:
             self.ratings = [e for e in ratings if e['rating'] is not None]
+
+        if debug:
+            self.ratings = ratings[:100]
 
     def __getitem__(self, index):
         return self.ratings[index]
@@ -37,7 +41,7 @@ class RatingDataset(Dataset):
         return len(self.ratings)
 
 
-#TODO: Move image IO to separate module, that could be used through out the project
+# TODO: Move image IO to separate module, that could be used through out the project
 def make_cached_filepath(filepath):
     basename= os.path.basename(filepath)
     filename, _ = os.path.splitext(basename)
@@ -170,13 +174,10 @@ def training_step(dataloader,
 
     mlflow.log_metric("training_loss",  training_loss, step=global_step)
 
-    macro_f1 = f1_score(targets_f1, predictions_f1, average='macro', labels=list(RATING_MAPPING.keys()), zero_division=0.0)
-    mlflow.log_metric(f"train_f1_macro",macro_f1, step=global_step)
+    log_metrics('train',targets_f1, predictions_f1)
 
-    multiclass_f1_score = f1_score(targets_f1, predictions_f1, average=None, labels=list(RATING_MAPPING.keys()), zero_division=0.0)
-    for class_name, idx in RATING_MAPPING.items():
-        score = multiclass_f1_score[idx]
-        mlflow.log_metric(f"train_f1_{class_name}", score, step=global_step)
+    return global_step
+
 
 
 def validation_step(validation_dataset,
@@ -196,7 +197,7 @@ def validation_step(validation_dataset,
         probabilities = model(images)
 
         loss = loss_fn(probabilities, targets)
-        validation_loss += loss.item()
+        validation_loss += loss.detach().item()
 
         target = targets.argmax(dim=1).tolist()
         predictions = probabilities.argmax(dim=1).tolist()
@@ -205,18 +206,22 @@ def validation_step(validation_dataset,
         targets_f1.extend(target)
         i += 1
 
+    mlflow.log_metric("validation_loss", validation_loss, step=global_step)
+    log_metrics('val', targets_f1, predictions_f1)
 
+    return loss
+
+def log_metrics(phase, targets_f1, predictions_f1):
     macro_f1 = f1_score(targets_f1, predictions_f1, average='macro', labels=list(RATING_MAPPING.keys()), zero_division=0.0)
     mlflow.log_metric(f"val_f1_macro_f1",macro_f1, step=global_step)
 
-    multiclass_f1_score = f1_score(targets_f1, predictions_f1, average=None, labels=list(RATING_MAPPING.keys()), zero_division=0.0)
+    label_precisions, label_recalls, label_f1, support = precision_recall_fscore_support(targets_f1, predictions_f1, average=None, labels=list(RATING_MAPPING.keys()), zero_division=0.0)
+    data = (('f1',label_f1), ('precision', label_precisions), ('recall', label_recalls),('support', support))
     for class_name, idx in RATING_MAPPING.items():
-        score = multiclass_f1_score[idx]
-        mlflow.log_metric(f"val_f1_{class_name}", score, step=global_step)
+        for (score_type, score_values) in data:
+            score = score_values[idx]
+            mlflow.log_metric(f"{phase}_{score_type}_{class_name}", score, step=global_step)
 
-    mlflow.log_metric("validation_loss", validation_loss, step=global_step)
-
-    return loss
 
 
 if __name__ == "__main__":
@@ -231,15 +236,18 @@ if __name__ == "__main__":
     parser.add_argument("--train", default=False, action=argparse.BooleanOptionalAction)
     parser.add_argument("--classify", default=False, action=argparse.BooleanOptionalAction)
     parser.add_argument("--cache", default=False, action=argparse.BooleanOptionalAction)
+    parser.add_argument("--debug", default=False, action=argparse.BooleanOptionalAction)
     args = parser.parse_args()
 
-    batch_size = 20
+    batch_size = 10
 
     if args.cache:
 
         ratings_dict = get_all_ratings_cached()
+        
 
-        dataset = RatingDataset(ratings_dict.values())
+
+        dataset = RatingDataset(ratings_dict.values(), debug=args.debug)
         processor = AutoImageProcessor.from_pretrained("microsoft/resnet-50")
         collator = Collator(processor, device='cpu')
         dataloader = DataLoader(dataset,
@@ -252,7 +260,7 @@ if __name__ == "__main__":
 
     if args.classify:
         ratings_dict = get_all_ratings_cached()
-        classify_dataset = RatingDataset(ratings_dict.values())
+        classify_dataset = RatingDataset(ratings_dict.values(), debug=args.debug)
         processor = AutoImageProcessor.from_pretrained("microsoft/resnet-50")
         collator = Collator(processor, device='cuda')
         dataloader_classify = DataLoader(classify_dataset,
@@ -289,8 +297,11 @@ if __name__ == "__main__":
         mlflow.set_tracking_uri("http://localhost:5000")
 
         with mlflow.start_run():
-            mlflow.set_experiment(args.experiment_name)
-            mlflow.set_experiment_tag("debug", "debug")
+            if args.debug:
+                mlflow.set_experiment("debuga")
+                mlflow.set_experiment_tag("debug", "debug")
+            else:
+                mlflow.set_experiment(args.experiment_name)
 
             ratings_dict = get_all_ratings_cached()
             ratings_values = list(ratings_dict.values())
@@ -300,15 +311,18 @@ if __name__ == "__main__":
 
             train_gen, val_gen = random_split(ratings_values, [0.98, 0.02])
 
-            training_dataset = RatingDataset(list(train_gen))
+            training_dataset = RatingDataset(list(train_gen), debug=args.debug)
 
-            validation_dataset = RatingDataset(list(val_gen))
+            validation_dataset = RatingDataset(list(val_gen), debug=args.debug)
 
             processor = AutoImageProcessor.from_pretrained("microsoft/resnet-50")
 
             collator = Collator(processor, device='cuda')
 
-            sample_weights = [SAMPLING_WEIGHT[e['rating']] for e in training_dataset]
+            sample_weights = [SAMPLING_WEIGHT[e['rating']] 
+                              for e 
+                              in training_dataset 
+                              if e['rating'] and e['rating'] is not None]
 
             sampler = WeightedRandomSampler(sample_weights,
                                             num_samples=len(training_dataset))
@@ -320,7 +334,7 @@ if __name__ == "__main__":
                                     sampler=sampler,
                                     collate_fn=collator.collate_fn)
 
-            dataloader_validation = DataLoader(training_dataset,
+            dataloader_validation = DataLoader(validation_dataset,
                                     batch_size=batch_size,
                                     shuffle=True,
                                     collate_fn=collator.collate_fn)
@@ -340,17 +354,17 @@ if __name__ == "__main__":
             global_step = 0
 
             for epoch_i in range(epochs):
-                training_step(dataloader_train,
-                              model,
-                              loss_fn,
-                              optimizer_resnet,
-                              optimizer_dense,
-                              resnet_lr_schedule,
-                              global_step)
+                global_step = training_step(dataloader_train,
+                                            model,
+                                            loss_fn,
+                                            optimizer_resnet,
+                                            optimizer_dense,
+                                            resnet_lr_schedule,
+                                            global_step)
                 validation_loss = validation_step(dataloader_validation,
-                                           model,
-                                           loss_fn,
-                                           global_step)
+                                                  model,
+                                                  loss_fn,
+                                                  global_step)
 
                 if validation_loss < best_loss:
                     logger.info(f"Saving new model, new loss: {validation_loss}")

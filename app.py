@@ -1,5 +1,4 @@
 import streamlit as st
-import pudb
 from pymilvus import connections
 from pymilvus import CollectionSchema, FieldSchema, DataType
 from pymilvus import Collection

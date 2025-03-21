@@ -4,7 +4,7 @@ verify_ssl = true
 name = "pypi"
 
 [packages]
-torch = "==1.11.*"
+torch = "==2.6.*"
 streamlit = "*"
 transformers = "*"
 pillow = "*"

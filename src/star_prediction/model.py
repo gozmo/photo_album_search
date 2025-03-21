@@ -24,7 +24,7 @@ class Dense(nn.Module):
                                     nn.Linear(1000, 1000),
                                     nn.ReLU(),
                                     nn.Linear(1000, output_size),
-                                    nn.Softmax())
+                                    nn.Softmax(dim=0))
 
     def forward(self, x):
         bs, _, _ ,_ = x.shape
