@@ -96,11 +96,10 @@ RATING_MAPPING = {"0": 0,
 SAMPLING_WEIGHT = {"0": 1,
                   "1": 1,
                   "2": 2,
-                  "3": 5,
-                  "4": 10,
-                  "5": 20,
-                  "-1": 10}
-
+                  "3": 2,
+                  "4": 3,
+                  "5": 5,
+                  "-1": 1}
 
 def rating_to_target(rating):
     target_tensor = torch.zeros(len(RATING_MAPPING))
@@ -109,8 +108,6 @@ def rating_to_target(rating):
     
     return target_tensor
     
-
-
 #TODO: Collator for caching only
 class Collator:
     def __init__(self, processor, device):
@@ -131,7 +128,6 @@ class Collator:
 
             target = rating_to_target(elem['rating'])
             targets.append(target)
-
 
         img_tensors = processor(images, return_tensors="pt")
 
@@ -177,8 +173,6 @@ def training_step(dataloader,
     log_metrics('train',targets_f1, predictions_f1)
 
     return global_step
-
-
 
 def validation_step(validation_dataset,
                     model,
@@ -306,12 +300,14 @@ if __name__ == "__main__":
             ratings_dict = get_all_ratings_cached()
             ratings_values = list(ratings_dict.values())
 
+            rating_values = [e for e in ratings_values if e['rating']]
+
             if args.limit != -1:
                 ratings_values = ratings_values[:args.limit]
 
             train_gen, val_gen = random_split(ratings_values, [0.98, 0.02])
+            train_split = list(train_gen)
 
-            training_dataset = RatingDataset(list(train_gen), debug=args.debug)
 
             validation_dataset = RatingDataset(list(val_gen), debug=args.debug)
 
@@ -319,16 +315,14 @@ if __name__ == "__main__":
 
             collator = Collator(processor, device='cuda')
 
+            training_dataset = RatingDataset(list(train_gen), debug=args.debug)
             sample_weights = [SAMPLING_WEIGHT[e['rating']] 
                               for e 
-                              in training_dataset 
-                              if e['rating'] and e['rating'] is not None]
+                              in training_dataset]
 
             sampler = WeightedRandomSampler(sample_weights,
-                                            num_samples=len(training_dataset))
-
-
-            
+                                            num_samples=len(training_dataset),
+                                            replacement=True)
             dataloader_train = DataLoader(training_dataset,
                                     batch_size=batch_size,
                                     sampler=sampler,

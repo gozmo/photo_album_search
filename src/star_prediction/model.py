@@ -17,13 +17,14 @@ class Dense(nn.Module):
     def __init__(self, output_size):
         super().__init__()
 
-        self.layers = nn.Sequential(nn.Linear(2048*7*7, 1000),
+        self.layers = nn.Sequential(
+                                    nn.Dropout(0.5),
+                                    nn.LayerNorm((2048*7*7)),
+                                    nn.Linear(2048*7*7, 1000),
                                     nn.ReLU(),
-                                    nn.Linear(1000, 1000),
+                                    nn.Linear(1000, 100),
                                     nn.ReLU(),
-                                    nn.Linear(1000, 1000),
-                                    nn.ReLU(),
-                                    nn.Linear(1000, output_size),
+                                    nn.Linear(100, output_size),
                                     nn.Softmax(dim=0))
 
     def forward(self, x):
